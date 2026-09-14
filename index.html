@@ -148,6 +148,11 @@
   .empty-state { text-align: center; padding: 40px 0; color: var(--taupe); font-size: 14px; }
   .notes-text { font-size: 11px; color: var(--taupe); margin-top: 6px; font-style: italic; }
   .spacer { height: 8px; }
+.help{font-size:12px;line-height:1.5;margin:8px 0;color:var(--charcoal)}
+#receipt-preview img{max-width:100%;max-height:240px;object-fit:contain;margin:10px 0}
+input,select{min-width:0;max-width:100%} .expense-top{flex-wrap:wrap}
+#receipt-dialog{border:0;border-radius:12px;padding:16px;max-width:95vw;max-height:90vh;margin:auto;background:var(--bone)}
+#receipt-dialog img{display:block;max-width:85vw;max-height:70vh;object-fit:contain}
 </style>
 </head>
 <body>
@@ -160,7 +165,7 @@
   <div id="content">
     <!-- LOG TAB -->
     <div id="tab-log" class="tab-content active">
-      <div class="section-title">Log Expense</div>
+      <div class="section-title" id="form-title">Log Expense</div>
       <div class="card">
         <div id="amount-wrap">
           <div class="field-label">Amount</div>
@@ -211,7 +216,12 @@
           <div class="field-label">Notes (optional)</div>
           <input id="log-notes" type="text" placeholder="e.g. For balsam fir shipment">
         </div>
-        <button class="btn btn-primary" onclick="logExpense()" style="width:100%">Log Expense</button>
+        <div class="field"><label class="field-label" for="receipt-photo">Receipt photo (optional)</label>
+<input type="file" id="receipt-photo" accept="image/*" onchange="attachReceipt(this)">
+<div id="receipt-preview"></div><p class="help">Choose a photo or take one with your phone. Photos stay on this device.</p></div>
+<div class="field"><label class="field-label" for="log-repeat">Repeat</label><select id="log-repeat"><option value="">Does not repeat</option><option value="monthly">Every month</option><option value="weekly">Every week</option><option value="yearly">Every year</option></select><p class="help">Due repeats are added when you open the app. No payments are made. Changes here apply to future repeats; past entries stay as recorded.</p></div>
+<button id="save-expense" class="btn btn-primary" onclick="logExpense()" style="width:100%">Log Expense</button>
+<button id="cancel-edit" class="btn btn-secondary hidden" onclick="resetExpenseForm()" style="width:100%;margin-top:10px">Cancel edit</button>
       </div>
       <div id="recent-section" class="hidden">
         <div style="font-family:'Cormorant Garamond',serif;font-size:13px;color:var(--taupe);margin-bottom:10px;letter-spacing:0.08em;text-transform:uppercase">Last 3 logged</div>
@@ -268,7 +278,7 @@
 
     <!-- HISTORY TAB -->
     <div id="tab-history" class="tab-content">
-      <div class="section-title">Expense History</div>
+      <div class="section-title">Expense History</div><div id="recurring-list"></div>
       <div class="field"><input id="search-input" type="text" placeholder="Search expenses…" oninput="renderHistory()"></div>
       <div class="filter-scroll" id="filter-scroll"></div>
       <div id="summary-bar" class="hidden"></div>
@@ -298,6 +308,7 @@
 
 <div id="toast"></div>
 
+<dialog id="receipt-dialog"><button class="btn btn-secondary" onclick="document.getElementById('receipt-dialog').close()">Close</button><img id="full-receipt" alt="Receipt photo"></dialog>
 <script>
 const STORAGE_KEY = "mw_tracker_v1";
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -327,7 +338,10 @@ function loadData() {
   catch { return defaultState(); }
 }
 
-function saveData() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {} }
+function saveData() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); return true; }
+  catch { state = loadData(); showToast("Not saved: device storage is full or unavailable. Remove the new photo and retry.", "error"); return false; }
+}
 
 let state = loadData();
 
@@ -364,7 +378,7 @@ function switchTab(tab) {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("log-date").value = new Date().toISOString().split("T")[0];
+  document.getElementById("log-date").value = localDate();
   document.getElementById("header-sub").textContent = "Financial Tracker · " + CURRENT_YEAR;
   document.getElementById("ytd-label").textContent = "Year to Date · " + CURRENT_YEAR;
   buildMonthPills();
@@ -373,34 +387,6 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 // ── LOG ───────────────────────────────────────────────────────────────────────
-function logExpense() {
-  const amount = document.getElementById("log-amount").value;
-  const desc = document.getElementById("log-desc").value.trim();
-  const cat = document.getElementById("log-cat").value;
-  if (!amount || !desc || !cat) { showToast("Fill in amount, category & description", "error"); return; }
-  const expense = {
-    id: Date.now(),
-    date: document.getElementById("log-date").value,
-    description: desc,
-    category: cat,
-    payment: document.getElementById("log-payment").value,
-    amount: parseFloat(amount),
-    taxDeductible: document.getElementById("log-tax").value,
-    receiptSaved: document.getElementById("log-receipt").value,
-    notes: document.getElementById("log-notes").value.trim(),
-  };
-  state.expenses.unshift(expense);
-  saveData();
-  showToast("Expense logged ✓");
-  document.getElementById("log-amount").value = "";
-  document.getElementById("log-desc").value = "";
-  document.getElementById("log-cat").value = "";
-  document.getElementById("log-payment").value = "";
-  document.getElementById("log-notes").value = "";
-  document.getElementById("log-tax").value = "Yes";
-  document.getElementById("log-receipt").value = "No";
-  renderRecent();
-}
 
 function renderRecent() {
   const sec = document.getElementById("recent-section");
@@ -409,7 +395,7 @@ function renderRecent() {
   sec.classList.remove("hidden");
   list.innerHTML = state.expenses.slice(0, 3).map(e => `
     <div class="recent-item">
-      <div><div class="recent-desc">${e.description}</div><div class="recent-meta">${e.category} · ${e.date}</div></div>
+      <div><div class="recent-desc">${escapeText(e.description)}</div><div class="recent-meta">${escapeText(e.category)} · ${e.date}</div></div>
       <div class="recent-amount">${fmt(e.amount)}</div>
     </div>`).join("");
 }
@@ -431,7 +417,7 @@ function renderDashboard() {
   const totalRev = toNum(rev.etsy) + toNum(rev.squarespace) + toNum(rev.other);
 
   const monthExp = state.expenses.filter(e => {
-    const d = new Date(e.date); return MONTHS[d.getMonth()] === selectedMonth && d.getFullYear() === CURRENT_YEAR;
+    const d = new Date(e.date + "T12:00:00"); return MONTHS[d.getMonth()] === selectedMonth && d.getFullYear() === CURRENT_YEAR;
   });
   const totalExp = monthExp.reduce((s, e) => s + toNum(e.amount), 0);
   const net = totalRev - totalExp;
@@ -472,7 +458,7 @@ function renderDashboard() {
     const r = state.monthlyRevenue[m];
     return s + toNum(r.etsy) + toNum(r.squarespace) + toNum(r.other);
   }, 0);
-  const ytdExp = state.expenses.filter(e => new Date(e.date).getFullYear() === CURRENT_YEAR).reduce((s,e) => s+toNum(e.amount), 0);
+  const ytdExp = state.expenses.filter(e => new Date(e.date + "T12:00:00").getFullYear() === CURRENT_YEAR).reduce((s,e) => s+toNum(e.amount), 0);
   const ytdNet = ytdRev - ytdExp;
   document.getElementById("ytd-rev").textContent = fmt(ytdRev);
   document.getElementById("ytd-exp").textContent = fmt(ytdExp);
@@ -500,7 +486,7 @@ function saveRevenue() {
     squarespace: document.getElementById("rev-sq").value,
     other: document.getElementById("rev-other").value,
   };
-  saveData();
+  if (!saveData()) return;
   revEditOpen = false;
   document.getElementById("rev-display").classList.remove("hidden");
   document.getElementById("rev-edit").classList.add("hidden");
@@ -558,7 +544,7 @@ function saveCogs(product) {
     platformFee: document.getElementById("cogs-platformFee").value,
     other: document.getElementById("cogs-other").value,
   };
-  saveData(); editingCogs = null; renderCogs(); showToast("COGS updated ✓");
+  if (!saveData()) return; editingCogs = null; renderCogs(); showToast("COGS updated ✓");
 }
 
 // ── HISTORY ───────────────────────────────────────────────────────────────────
@@ -572,6 +558,7 @@ function buildFilterPills() {
 function setFilter(cat) { selectedFilter = cat; buildFilterPills(); renderHistory(); }
 
 function renderHistory() {
+  renderRecurring();
   const search = document.getElementById("search-input").value.toLowerCase();
   const filtered = state.expenses.filter(e => {
     const matchCat = selectedFilter === "All" || e.category === selectedFilter;
@@ -592,16 +579,18 @@ function renderHistory() {
     <div class="expense-item">
       <div class="expense-top">
         <div style="flex:1;padding-right:12px">
-          <div class="expense-desc">${e.description}</div>
-          <div class="expense-meta">${e.category}${e.payment?" · "+e.payment:""} · ${e.date}</div>
+          <div class="expense-desc">${escapeText(e.description)}</div>
+          <div class="expense-meta">${escapeText(e.category)}${e.payment?" · "+escapeText(e.payment):""} · ${e.date}</div>
           <div>
             <span class="tag ${e.taxDeductible==="Yes"?"tag-green":"tag-bone"}">${e.taxDeductible==="Yes"?"✓ Deductible":"Not deductible"}</span>
             <span class="tag ${e.receiptSaved==="Yes"?"tag-green":"tag-red"}">${e.receiptSaved==="Yes"?"Receipt ✓":"No receipt"}</span>
           </div>
-          ${e.notes?`<div class="notes-text">${e.notes}</div>`:""}
+          ${e.notes?`<div class="notes-text">${escapeText(e.notes)}</div>`:""}
         </div>
         <div style="text-align:right">
           <div class="expense-amount">${fmt(e.amount)}</div>
+<button class="btn btn-secondary btn-sm" onclick="editExpense(${e.id})">Edit</button>
+${e.receiptPhoto ? `<button class="btn btn-secondary btn-sm" onclick="viewReceipt(${e.id})">Receipt</button>` : ""}
           ${confirmDeleteId===e.id
             ? `<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">
                 <button class="btn btn-danger btn-sm" onclick="deleteExpense(${e.id})">Delete</button>
@@ -618,8 +607,113 @@ function confirmDelete(id) { confirmDeleteId = id; renderHistory(); }
 function cancelDelete() { confirmDeleteId = null; renderHistory(); }
 function deleteExpense(id) {
   state.expenses = state.expenses.filter(e => e.id !== id);
-  saveData(); confirmDeleteId = null; showToast("Deleted"); renderHistory(); renderRecent();
+  if (!saveData()) return; confirmDeleteId = null; showToast("Deleted"); renderHistory(); renderRecent();
 }
+let editingExpenseId = null;
+let pendingReceipt = null;
+let photoBusy = false;
+let photoVersion = 0;
+function localDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function escapeText(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function validDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(s) && localDate(new Date(s+'T12:00:00')) === s; }
+function occurrenceDate(anchor, frequency, index) {
+  const [y,m,d] = anchor.split('-').map(Number);
+  if (frequency === 'weekly') return localDate(new Date(y,m-1,d+7*index,12));
+  const month = m-1 + (frequency === 'yearly' ? 12 : 1)*index;
+  return localDate(new Date(y,month,Math.min(d,new Date(y,month+1,0).getDate()),12));
+}
+function newExpenseId() { return Math.max(Date.now(), ...state.expenses.map(e=>Number(e.id)||0)) + 1; }
+function resetExpenseForm() {
+  editingExpenseId = null; pendingReceipt = null; photoVersion++; photoBusy = false;
+  for (const field of ['amount','desc','cat','payment','notes','repeat']) document.getElementById('log-'+field).value = '';
+  document.getElementById('log-tax').value = 'Yes'; document.getElementById('log-receipt').value = 'No';
+  document.getElementById('log-date').value = localDate();
+  document.getElementById('receipt-photo').value = '';
+  document.getElementById('form-title').textContent = 'Log Expense';
+  document.getElementById('save-expense').textContent = 'Log Expense';
+  document.getElementById('save-expense').disabled = false;
+  document.getElementById('cancel-edit').classList.add('hidden'); renderReceiptPreview();
+}
+function editExpense(id) {
+  const e = state.expenses.find(e=>e.id===id); if (!e) return;
+  resetExpenseForm(); editingExpenseId = id;
+  const fields = {amount:'amount',desc:'description',cat:'category',payment:'payment',date:'date',tax:'taxDeductible',receipt:'receiptSaved',notes:'notes'};
+  for (const [field,key] of Object.entries(fields)) document.getElementById('log-'+field).value = e[key] ?? '';
+  const schedule = (state.recurring||[]).find(r=>r.id===e.recurringId && r.active);
+  document.getElementById('log-repeat').value = schedule?.frequency || '';
+  pendingReceipt = e.receiptPhoto || null; renderReceiptPreview();
+  document.getElementById('form-title').textContent = 'Edit Expense'; document.getElementById('save-expense').textContent = 'Save changes';
+  document.getElementById('cancel-edit').classList.remove('hidden'); switchTab('log'); document.getElementById('content').scrollTop=0;
+}
+function renderReceiptPreview() {
+  const box=document.getElementById('receipt-preview'); box.replaceChildren();
+  if (!pendingReceipt) return;
+  const img=document.createElement('img'); img.src=pendingReceipt; img.alt='Attached receipt'; box.append(img);
+  const b=document.createElement('button'); b.className='btn btn-secondary btn-sm'; b.textContent='Remove photo';
+  b.onclick=()=>{pendingReceipt=null; document.getElementById('receipt-photo').value='';document.getElementById('log-receipt').value='No';renderReceiptPreview();}; box.append(b);
+}
+async function attachReceipt(input) {
+  const file=input.files[0]; if (!file) return;
+  const version=++photoVersion; photoBusy=true; document.getElementById('save-expense').disabled=true;
+  let url;
+  try {
+    if (file.size>25*1024*1024) throw Error('Choose a photo smaller than 25 MB.');
+    url=URL.createObjectURL(file); const img=new Image(); img.src=url;
+    await img.decode();
+    const scale=Math.min(1,1800/Math.max(img.width,img.height)); const canvas=document.createElement('canvas');
+    canvas.width=Math.round(img.width*scale);canvas.height=Math.round(img.height*scale);
+    const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    const data=canvas.toDataURL('image/jpeg',0.82);
+    if (version!==photoVersion) return;
+    pendingReceipt=data;document.getElementById('log-receipt').value='Yes';renderReceiptPreview();
+  } catch { if(version===photoVersion) showToast('Could not read this photo. Try a JPG or PNG under 25 MB.','error'); }
+  finally {if(url) URL.revokeObjectURL(url); if(version===photoVersion){photoBusy=false;document.getElementById('save-expense').disabled=false;input.value='';}}
+}
+function viewReceipt(id) {const e=state.expenses.find(e=>e.id===id);if(!e?.receiptPhoto)return;document.getElementById('full-receipt').src=e.receiptPhoto;document.getElementById('receipt-dialog').showModal();}
+function logExpense() {
+  if(photoBusy)return;
+  const value=k=>document.getElementById('log-'+k).value;
+  const amount=Number(value('amount')), description=value('desc').trim(), date=value('date');
+  if(!Number.isFinite(amount)||amount<=0||!description||!value('cat')||!validDate(date)){showToast('Enter a positive amount, description, category and valid date.','error');return;}
+  const old=state.expenses.find(e=>e.id===editingExpenseId);
+  const e={...old,id:old?.id||newExpenseId(),amount,description,date,category:value('cat'),payment:value('payment'),taxDeductible:value('tax'),receiptSaved:pendingReceipt?'Yes':value('receipt'),notes:value('notes').trim()};
+  if(pendingReceipt)e.receiptPhoto=pendingReceipt;else delete e.receiptPhoto;
+  state.recurring ||= [];
+  let r=state.recurring.find(r=>r.id===old?.recurringId);
+  const frequency=value('repeat');
+  if(frequency){
+    if(!r||!r.active){r={id:crypto.randomUUID(),active:true,anchor:date,index:1};state.recurring.push(r);}
+    else if(r.frequency!==frequency||old.date!==date){r.anchor=date;r.index=1;}
+    r.frequency=frequency;r.template={description,amount,category:e.category,payment:e.payment,taxDeductible:e.taxDeductible,notes:e.notes};e.recurringId=r.id;
+  }else if(r){r.active=false;}
+  if(old) state.expenses[state.expenses.indexOf(old)]=e; else state.expenses.unshift(e);
+  if(!saveData())return;
+  resetExpenseForm();catchUpRecurring();renderRecent();showToast(old?'Expense updated ✓':'Expense logged ✓');
+}
+function catchUpRecurring(today=localDate()) {
+  let changed=false;
+  for(const r of state.recurring||[]){
+    if(!r.active)continue;
+    let due=occurrenceDate(r.anchor,r.frequency,r.index);
+    while(due<=today){
+      if(!state.expenses.some(e=>e.recurringId===r.id&&e.date===due))state.expenses.unshift({...r.template,id:newExpenseId(),date:due,recurringId:r.id,receiptSaved:'No'});
+      r.index++;changed=true;due=occurrenceDate(r.anchor,r.frequency,r.index);
+    }
+  }
+  if(changed)return saveData();return true;
+}
+function stopRecurring(id) { const r=state.recurring.find(r=>r.id===id);if(!r)return;r.active=false;if(saveData()){renderRecurring();showToast('Future repeats stopped');} }
+function renderRecurring() {
+  const box=document.getElementById('recurring-list');if(!box)return;box.replaceChildren();
+  for(const r of (state.recurring||[]).filter(r=>r.active)){
+    const card=document.createElement('div');card.className='card';
+    const p=document.createElement('p');p.className='help';p.textContent=`${r.template.description} · ${fmt(r.template.amount)} · ${r.frequency} · Next: ${occurrenceDate(r.anchor,r.frequency,r.index)}`;
+    const b=document.createElement('button');b.className='btn btn-secondary btn-sm';b.textContent='Stop repeating';b.onclick=()=>stopRecurring(r.id);card.append(p,b);box.append(card);
+  }
+}
+window.addEventListener('DOMContentLoaded',()=>{catchUpRecurring();renderRecent();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){catchUpRecurring();renderRecent();if(document.getElementById('tab-history').classList.contains('active'))renderHistory();if(document.getElementById('tab-dashboard').classList.contains('active'))renderDashboard();}});
+
 </script>
 </body>
 </html>
